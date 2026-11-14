@@ -93,6 +93,7 @@ type PeerStatus struct {
 
 // MeshStatus is the state of sharing over Tailscale.
 type MeshStatus struct {
+	Provider   string       `json:"provider"`
 	Enabled    bool         `json:"enabled"`
 	Available  bool         `json:"available"` // Tailscale is installed and connected
 	Error      string       `json:"error"`
@@ -118,6 +119,8 @@ type Node struct {
 	Hello func() Hello
 	// Enabled reports whether sharing is on.
 	Enabled func() bool
+	// Provider labels discovery status, including failures before discovery completes.
+	Provider func() string
 	// OnChange gets the status whenever it changes.
 	OnChange func(MeshStatus)
 	// OnData is called when files of other devices arrived.
@@ -137,6 +140,7 @@ type Node struct {
 	tags     map[string]string // device/name → tag of the copy pulled
 	server   *http.Server
 	listenOn string
+	secret   string
 	peers    map[string]PeerStatus // by tailnet IP, kept across scans
 }
 
@@ -147,6 +151,8 @@ func New(root, self string, port int, statePath string) *Node {
 		root: root, self: self, port: port, statePath: statePath,
 		TailnetStatus: tailnet.Get,
 		client: &http.Client{
+			// A peer must never redirect a request carrying a pairing key.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
 			// Straight to the peer: never through a proxy of the environment.
 			Transport: &http.Transport{Proxy: nil, MaxIdleConnsPerHost: 2, IdleConnTimeout: 90 * time.Second},
 			Timeout:   30 * time.Second,
@@ -198,8 +204,13 @@ func (n *Node) Run(ctx context.Context) {
 }
 
 func (n *Node) update(fn func(*MeshStatus)) {
+	provider := "Tailscale"
+	if n.Provider != nil {
+		provider = n.Provider()
+	}
 	n.mu.Lock()
 	fn(&n.status)
+	n.status.Provider = provider
 	st := n.status
 	st.Peers = append([]PeerStatus(nil), st.Peers...)
 	n.mu.Unlock()
@@ -216,9 +227,15 @@ func (n *Node) scan(ctx context.Context) {
 	}
 	n.update(func(s *MeshStatus) { s.Enabled, s.Scanning = true, true })
 	st, err := n.TailnetStatus(ctx)
+	if err == nil && st != nil && st.Provider == "EasyTier" && len(st.Secret) < 16 {
+		err = errors.New("EasyTier: a sync key of at least 16 characters is required")
+	}
 	if err != nil || st == nil || !st.Running() {
 		n.stopServer()
 		msg := i18n.T("Tailscale is not connected")
+		if n.Provider != nil && n.Provider() == "EasyTier" {
+			msg = "EasyTier is not connected"
+		}
 		if err != nil {
 			msg = err.Error()
 		}
@@ -242,6 +259,7 @@ func (n *Node) scan(ctx context.Context) {
 	}
 	n.mu.Lock()
 	n.allowed = allowed
+	n.secret = st.Secret
 	n.mu.Unlock()
 
 	selfIP, _ := st.Self.IPv4()
@@ -249,7 +267,7 @@ func (n *Node) scan(ctx context.Context) {
 
 	var cands []tailnet.Node
 	for _, p := range st.Peers {
-		if st.Own(p) && p.Desktop() {
+		if st.Own(p) && (p.Desktop() || st.Provider == "EasyTier") {
 			cands = append(cands, p)
 		}
 	}
@@ -284,6 +302,7 @@ func (n *Node) scan(ctx context.Context) {
 	n.saveTags()
 
 	n.update(func(s *MeshStatus) {
+		s.Provider = st.Provider
 		s.Enabled, s.Available, s.Error, s.Scanning = true, true, "", false
 		s.Tailnet, s.SelfHost, s.SelfIP = st.Tailnet, st.Self.HostName, selfIP.String()
 		s.Serving, s.ServeError = serveErr == nil, ""
@@ -415,6 +434,14 @@ func (n *Node) get(ctx context.Context, url string, limit int64) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
+	n.mu.Lock()
+	secret := n.secret
+	n.mu.Unlock()
+	if secret != "" {
+		if err := signRequest(secret, req); err != nil {
+			return nil, err
+		}
+	}
 	resp, err := n.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -423,7 +450,16 @@ func (n *Node) get(ctx context.Context, url string, limit int64) ([]byte, error)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s", resp.Status)
 	}
-	return store.ReadLimited(resp.Body, limit)
+	body, err := store.ReadLimited(resp.Body, limit)
+	if err != nil {
+		return nil, err
+	}
+	if secret != "" {
+		if err := verifyResponse(secret, req, resp, body); err != nil {
+			return nil, err
+		}
+	}
+	return body, nil
 }
 
 func (n *Node) saveTags() {
@@ -478,7 +514,13 @@ func (n *Node) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ap, err := netip.ParseAddrPort(r.RemoteAddr)
 	n.mu.Lock()
 	ok := err == nil && n.allowed[ap.Addr().Unmap()]
+	secret := n.secret
 	n.mu.Unlock()
+	if secret != "" && !validRequest(secret, r) {
+		// A wrong key must not make two peers trigger scans of one another.
+		http.Error(w, "forbidden: check sync key and system clock", http.StatusForbidden)
+		return
+	}
 	if !ok {
 		n.Trigger() // a device that just joined the tailnet is let in after a scan
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -498,7 +540,15 @@ func (n *Node) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Device.ID = n.self
 		h.Files = n.ownFiles()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(h)
+		body, err := json.Marshal(h)
+		if err != nil {
+			http.Error(w, "encoding response", http.StatusInternalServerError)
+			return
+		}
+		if secret != "" {
+			w.Header().Set(responseHeader, responseMAC(secret, r, body))
+		}
+		_, _ = w.Write(body)
 	case strings.HasPrefix(r.URL.Path, PathFile):
 		name := strings.TrimPrefix(r.URL.Path, PathFile)
 		if !store.ValidFileName(name) {
@@ -511,6 +561,9 @@ func (n *Node) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
+		if secret != "" {
+			w.Header().Set(responseHeader, responseMAC(secret, r, data))
+		}
 		_, _ = w.Write(data)
 	default:
 		http.NotFound(w, r)

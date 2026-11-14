@@ -227,7 +227,7 @@ export function App() {
             <button type="button" class="status-line" onClick={() => go("devices")} title={meshStatus.error || meshStatus.serveError}>
               <span class={`status-dot ${meshStatus.available && meshStatus.serving ? "good" : meshStatus.available ? "warning" : "critical"}`} aria-hidden="true" />
               <span>
-                {meshStatus.available ? t("Tailscale sharing") : t("Tailscale not ready")}
+                {meshStatus.provider === "EasyTier" ? (meshStatus.available ? t("EasyTier sharing") : t("EasyTier not ready")) : (meshStatus.available ? t("Tailscale sharing") : t("Tailscale not ready"))}
                 <small>{meshStatus.available ? tn("{n} devices found", meshPeers) : meshStatus.error || t("Searching…")}</small>
               </span>
             </button>

@@ -15,11 +15,13 @@ import (
 
 	"clashtraffic/internal/clash"
 	"clashtraffic/internal/collector"
+	"clashtraffic/internal/easytier"
 	"clashtraffic/internal/i18n"
 	"clashtraffic/internal/mesh"
 	"clashtraffic/internal/sessions"
 	"clashtraffic/internal/store"
 	"clashtraffic/internal/syncer"
+	"clashtraffic/internal/tailnet"
 )
 
 // ClashStatus tells whether the app reaches the Clash core.
@@ -138,9 +140,22 @@ func (c *Core) Init(dir string, lockErr error) error {
 			Live:   mesh.LiveSummary{Connected: c.status.Connected, UpRate: c.live.UpRate, DownRate: c.live.DownRate},
 		}
 	}
-	c.mesh.Enabled = func() bool { return c.settings().Tailscale }
+	c.mesh.Enabled = func() bool { s := c.settings(); return s.Tailscale || s.EasyTier }
+	c.mesh.Provider = func() string {
+		if c.settings().EasyTier {
+			return "EasyTier"
+		}
+		return "Tailscale"
+	}
+	c.mesh.TailnetStatus = func(ctx context.Context) (*tailnet.Status, error) {
+		s := c.settings()
+		if s.EasyTier {
+			return easytier.Get(ctx, easytier.Config{CLI: s.EasyTierCLI, RPC: s.EasyTierRPC, Instance: s.EasyTierInstance, Secret: s.EasyTierSecret})
+		}
+		return tailnet.Get(ctx)
+	}
 	c.mesh.OnChange = func(st mesh.MeshStatus) { _ = MeshEvent.Broadcast(st) }
-	c.mesh.OnData = func() { _ = DataEvent.Broadcast(DataChange{At: time.Now().UnixMilli(), Reason: "tailscale"}) }
+	c.mesh.OnData = func() { _ = DataEvent.Broadcast(DataChange{At: time.Now().UnixMilli(), Reason: "mesh"}) }
 	if err := c.coll.Load(c.statePath, c.store.Gen()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		// Stale after a crash between saving the counters and the
 		// checkpoint: open connections count from now on instead.
@@ -193,7 +208,7 @@ func (c *Core) relanguage() {
 	if c.SyncStatus().LastError != "" {
 		c.TriggerSync()
 	}
-	if c.settings().Tailscale && c.mesh != nil {
+	if (c.settings().Tailscale || c.settings().EasyTier) && c.mesh != nil {
 		c.mesh.Trigger()
 	}
 }
@@ -571,6 +586,12 @@ func (c *Core) Settings() Settings {
 // SaveSettings applies and saves new preferences. A nil password keeps
 // the saved one.
 func (c *Core) SaveSettings(in Settings, password *string) (Settings, error) {
+	if in.EasyTier {
+		if err := (easytier.Config{RPC: in.EasyTierRPC, Secret: in.EasyTierSecret}).Validate(); err != nil {
+			return c.Settings(), err
+		}
+		in.Tailscale = false
+	}
 	c.mu.Lock()
 	old := c.file
 	f := old
@@ -632,7 +653,7 @@ func (c *Core) SaveSettings(in Settings, password *string) (Settings, error) {
 	if in.DeviceName != old.DeviceName {
 		_ = DataEvent.Broadcast(DataChange{At: time.Now().UnixMilli(), Reason: "device"})
 	}
-	if in.Tailscale != old.Tailscale {
+	if in.Tailscale != old.Tailscale || in.EasyTier != old.EasyTier || in.EasyTierCLI != old.EasyTierCLI || in.EasyTierRPC != old.EasyTierRPC || in.EasyTierInstance != old.EasyTierInstance || in.EasyTierSecret != old.EasyTierSecret {
 		c.mesh.Trigger()
 	}
 	if in.Language != old.Language {

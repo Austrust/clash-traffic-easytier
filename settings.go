@@ -59,6 +59,12 @@ type Settings struct {
 	// Tailscale shares the traffic with the other devices of the tailnet
 	// that run the app, found on their own.
 	Tailscale bool `json:"tailscale"`
+	// EasyTier takes precedence over Tailscale when enabled.
+	EasyTier         bool   `json:"easyTier"`
+	EasyTierCLI      string `json:"easyTierCli"`
+	EasyTierRPC      string `json:"easyTierRpc"`
+	EasyTierInstance string `json:"easyTierInstance"`
+	EasyTierSecret   string `json:"easyTierSecret"`
 	// Language is the language of the app, a tag of i18n.Languages; empty
 	// follows the system.
 	Language string `json:"language"`

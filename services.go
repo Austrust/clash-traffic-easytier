@@ -11,6 +11,7 @@ import (
 
 	"clashtraffic/internal/clash"
 	"clashtraffic/internal/collector"
+	"clashtraffic/internal/easytier"
 	"clashtraffic/internal/i18n"
 	"clashtraffic/internal/mesh"
 	"clashtraffic/internal/sessions"
@@ -157,6 +158,12 @@ type Preferences struct{ core *Core }
 
 // Get returns the settings.
 func (p *Preferences) Get() Settings { return p.core.Settings() }
+
+// DetectEasyTier reads local services and probes their network instances.
+// It does not save settings or start/stop EasyTier services.
+func (p *Preferences) DetectEasyTier(ctx context.Context, s Settings) easytier.Discovery {
+	return easytier.Probe(ctx, easytier.Config{CLI: s.EasyTierCLI, RPC: s.EasyTierRPC, Instance: s.EasyTierInstance})
+}
 
 // Save applies and saves the settings. A null password keeps the saved
 // one; "" deletes it.

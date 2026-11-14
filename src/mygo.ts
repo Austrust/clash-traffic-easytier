@@ -14,6 +14,16 @@ export interface AboutInfo {
   updates: UpdateInfo;
 }
 
+export interface Candidate {
+  rpc: string;
+  instance: string;
+  name: string;
+  ip: string;
+  host: string;
+  peers: number;
+  source: string;
+}
+
 /** ClashMode is how the app finds the Clash core. */
 export type ClashMode = "auto" | "manual";
 
@@ -57,6 +67,14 @@ export interface DeviceTotal {
   up: number;
   down: number;
   conns: number;
+}
+
+export interface Discovery {
+  cli: string;
+  version: string;
+  candidates: Candidate[];
+  errors: string[];
+  error: string;
 }
 
 export interface Endpoint {
@@ -115,6 +133,7 @@ export interface LiveSummary {
 }
 
 export interface MeshStatus {
+  provider: string;
   enabled: boolean;
   available: boolean;
   error: string;
@@ -276,6 +295,12 @@ export interface Settings {
    * that run the app, found on their own.
    */
   tailscale: boolean;
+  /** EasyTier takes precedence over Tailscale when enabled. */
+  easyTier: boolean;
+  easyTierCli: string;
+  easyTierRpc: string;
+  easyTierInstance: string;
+  easyTierSecret: string;
   /**
    * Language is the language of the app, a tag of i18n.Languages; empty
    * follows the system.
@@ -427,6 +452,13 @@ export const Preferences = {
    */
   chooseFolder(): Promise<string> {
     return call("Preferences.ChooseFolder");
+  },
+  /**
+   * DetectEasyTier reads local services and probes their network instances.
+   * It does not save settings or start/stop EasyTier services.
+   */
+  detectEasyTier(s: Settings): Promise<Discovery> {
+    return call("Preferences.DetectEasyTier", s);
   },
   /** Get returns the settings. */
   get(): Promise<Settings> {

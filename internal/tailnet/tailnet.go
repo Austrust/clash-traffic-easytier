@@ -21,6 +21,8 @@ import (
 
 // Node is a device of the tailnet.
 type Node struct {
+	// Trusted is set only by the EasyTier discovery adapter for routed peers.
+	Trusted  bool
 	HostName string
 	DNSName  string // e.g. mac-mini.tail1234.ts.net
 	OS       string // "macOS", "windows", "linux", "android", "iOS"…
@@ -55,6 +57,10 @@ func (n Node) Desktop() bool {
 
 // Status is the tailnet as this computer sees it.
 type Status struct {
+	// Provider is empty for the original Tailscale discovery.
+	Provider string
+	// Secret authenticates EasyTier synchronization, never the EasyTier network password.
+	Secret    string
 	State     string // "Running" when connected
 	Tailnet   string
 	DNSSuffix string // the tailnet's MagicDNS domain, e.g. tail1234.ts.net
@@ -68,6 +74,9 @@ type Status struct {
 // tailnet, so a peer is this tailnet's when its name is under this one's
 // domain. Without the domain, no peer is.
 func (s *Status) Own(n Node) bool {
+	if s.Provider == "EasyTier" {
+		return n.Trusted && !n.Sharee && !n.AltSharer
+	}
 	if s.DNSSuffix == "" || n.Sharee || n.AltSharer {
 		return false
 	}

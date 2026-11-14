@@ -45,7 +45,7 @@ export function DevicesPage({ filters, setFilters, go, notify, status }: PagePro
     <>
       <FilterBar filters={filters} setFilters={setFilters} hide={["device"]} />
       <div class="stack">
-        <TailscaleCard mesh={mesh} go={go} />
+        <MeshCard mesh={mesh} go={go} />
 
         <div class="device-grid">
           {devices.map((d) => {
@@ -101,7 +101,7 @@ export function DevicesPage({ filters, setFilters, go, notify, status }: PagePro
                   </dd>
                   {peer && (
                     <>
-                      <dt>Tailscale</dt>
+                      <dt>{mesh?.provider || "Tailscale"}</dt>
                       <dd>
                         {peer.host} · {peer.ip}
                       </dd>
@@ -158,7 +158,7 @@ const STATE: Record<string, { label: string; dot: string }> = {
   offline: { label: "Offline", dot: "idle" },
 };
 
-function TailscaleCard({ mesh, go }: { mesh: MeshStatus | null; go: PageProps["go"] }) {
+function MeshCard({ mesh, go }: { mesh: MeshStatus | null; go: PageProps["go"] }) {
   const [scanning, setScanning] = useState(false);
   const scan = async () => {
     setScanning(true);
@@ -169,7 +169,7 @@ function TailscaleCard({ mesh, go }: { mesh: MeshStatus | null; go: PageProps["g
   const found = mesh.peers.filter((p) => p.state === "app");
   return (
     <Card
-      title={t("Tailscale sync")}
+      title={mesh.provider === "EasyTier" ? t("EasyTier sync") : t("Tailscale sync")}
       extra={
         <div class="card-tools">
           {mesh.lastScan > 0 && <span class="muted small">{t("Scanned {ago}", { ago: ago(mesh.lastScan) })}</span>}
@@ -188,9 +188,9 @@ function TailscaleCard({ mesh, go }: { mesh: MeshStatus | null; go: PageProps["g
         </p>
       ) : !mesh.available ? (
         <div class="banner warning">
-          <strong>{mesh.error || t("Looking for Tailscale…")}</strong>
+          <strong>{mesh.error || (mesh.provider === "EasyTier" ? t("Looking for EasyTier…") : t("Looking for Tailscale…"))}</strong>
           <div class="small">
-            {t("Once Tailscale is installed and signed in, the computers of the tailnet that run Clash Traffic find each other and merge their numbers, with no setup.")}
+            {mesh.provider === "EasyTier" ? t("Connect EasyTier, enable its virtual interface and local RPC, then configure the sync key in Settings.") : t("Once Tailscale is installed and signed in, the computers of the tailnet that run Clash Traffic find each other and merge their numbers, with no setup.")}
           </div>
         </div>
       ) : (
@@ -223,7 +223,7 @@ function TailscaleCard({ mesh, go }: { mesh: MeshStatus | null; go: PageProps["g
             </table>
           </div>
           <p class="hint footnote">
-            {t("Only your own devices of the tailnet, not those shared into it, can read this computer's numbers; the access log is not shared.")}
+            {mesh.provider === "EasyTier" ? t("Only discovered EasyTier peers with the same sync key can read statistics; access logs are not shared.") : t("Only your own devices of the tailnet, not those shared into it, can read this computer's numbers; the access log is not shared.")}
           </p>
         </>
       )}

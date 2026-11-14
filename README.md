@@ -4,6 +4,8 @@
 
 # Clash Traffic
 
+> EasyTier feature fork: [Linux packages, setup and reproducible build](docs/LINUX.md). Upstream automatic updates are disabled in feature builds.
+
 See where your Clash Verge traffic goes — by app, site, proxy node, subscription and device.
 
 **English** · [简体中文](README.zh-CN.md)
@@ -18,6 +20,7 @@ See where your Clash Verge traffic goes — by app, site, proxy node, subscripti
 - **Proxy or direct** — one switch shows only the traffic your proxy plan counts.
 - **Subscriptions** — what each subscription carried, beside the usage and expiry its provider reports.
 - **All your computers, no setup** — copies running in your Tailscale tailnet find each other and merge their numbers. A shared folder or WebDAV works too.
+- **EasyTier discovery** — find direct and relayed devices automatically and reuse the same incremental statistics sync, with a separate pairing key. See [EasyTier setup](#easytier-setup).
 - **Access log and live view** — every connection with its app, target, node and rule; live speed and open connections.
 - **Stays out of the way** — finds Clash Verge by itself, lives in the menu bar, starts at login, updates itself, exports CSV, follows light and dark mode.
 
@@ -38,6 +41,30 @@ Download the latest build from [Releases](https://github.com/lufficc/clash-traff
 The builds are not signed yet. On macOS, right-click the app and choose **Open** the first time; on Windows, choose **More info → Run anyway**.
 
 It works with Clash Verge Rev, or any mihomo core whose controller it can reach. To tell apps apart it sets the core's `find-process-mode` to `always`; add `find-process-mode: always` to Clash Verge's merge config to keep it after a reload.
+
+## EasyTier setup
+
+1. Run EasyTier with a virtual IPv4 interface, encrypted networking, and a local management RPC endpoint (GUI service normally uses `127.0.0.1:15999`; standalone core normally uses `127.0.0.1:15888`). Install a matching `easytier-cli` supporting `-o json route`.
+2. In Settings → Multi-device sync, enable EasyTier and enter the same dedicated sync key (at least 16 characters) on your devices. Do not use the EasyTier network password. Selecting EasyTier switches off Tailscale sharing; existing Tailscale settings and stored statistics are retained.
+3. The CLI is found on PATH, beside the app, in the running EasyTier installation, or in common installation directories. Keep an existing working CLI path. Leave RPC and instance overrides empty: Windows discovery reads running service/process metadata, service config-directory instance IDs/names, and (as a fallback) local listener ports. It queries instances individually, so older multi-instance services also work. Only a single usable network is selected automatically; if several are found, use **Detect EasyTier → Use this network**, then Save. A working explicit endpoint remains preferred; failed endpoints fall back to discovery.
+4. Open Devices → EasyTier sync. Discovery and incremental sync run every minute; Scan now refreshes immediately. Allow inbound TCP **47321** only on the EasyTier interface/from your devices (development builds use 47322). Exclude the EasyTier network and its transport from proxy capture.
+
+Only virtual IPv4 addresses in the selected instance's route table are probed, including relayed routes. Subnet proxy CIDRs and public relay transport addresses are not scanned. The service binds only to the selected virtual IP and requires both a discovered source IP and the matching key. It does not follow HTTP redirects. Statistics are shared; detailed access logs are not. CLI failure stops serving at the next scan. History remains available while devices are offline.
+
+The detection button reports the CLI version, detected RPC/instance, and sanitized CLI errors (including stderr instead of just exit status 1). Probes are read-only and never start/stop services or change GUI settings. Empty/default endpoint fallbacks are 15999 then 15888. Windows service introspection is Windows-only; other platforms retain CLI/default-port probing.
+
+The implementation uses the official EasyTier CLI route JSON (`ipv4`, `hostname`, `next_hop_hostname`, `path_len`). Both flat arrays (2.5/2.6 style) and per-instance result envelopes (newer CLI) are supported. Versions without this format and no-TUN/IPv6-only configurations are unsupported. Additional UI labels are translated into Simplified Chinese; other non-English locales currently show the new labels in English.
+
+Requests and responses use HMAC-SHA256; the sync key is not sent to discovered peers. Requests are bound to their destination and expire after 60 seconds, so keep device clocks synchronized. The key is stored in the app's local settings file, alongside existing credentials; keep it private when sharing backups.
+
+For a local Windows feature build with upstream automatic updates disabled:
+
+```powershell
+$env:CLASH_TRAFFIC_EASYTIER_BUILD = "1"
+bun run build
+```
+
+The feature build retains the original application identifier and data location; exit the original app before launching it. Do not run both against the same data directory.
 
 ## Build
 

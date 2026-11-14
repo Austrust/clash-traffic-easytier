@@ -5,7 +5,7 @@ import { errorText } from "../lib/hooks";
 import { ago } from "../lib/format";
 import { takeChanged } from "../lib/form";
 import { LANGUAGES, t, tn, tx } from "../lib/i18n";
-import { events, Monitor, Preferences, type AboutInfo, type ClashStatus, type Endpoint, type Settings } from "../mygo";
+import { events, Monitor, Preferences, type AboutInfo, type ClashStatus, type Endpoint, type Settings, type Discovery } from "../mygo";
 
 export function SettingsPage({ status, notify }: PageProps) {
   const [saved, setSaved] = useState<Settings | null>(null);
@@ -16,6 +16,7 @@ export function SettingsPage({ status, notify }: PageProps) {
   const [clashTest, setClashTest] = useState<ClashStatus | null>(null);
   const [syncTest, setSyncTest] = useState<{ ok: boolean; msg: string } | null>(null);
   const [busy, setBusy] = useState("");
+  const [easyDiscovery, setEasyDiscovery] = useState<Discovery | null>(null);
   const savedRef = useRef(saved);
   savedRef.current = saved;
 
@@ -189,10 +190,40 @@ export function SettingsPage({ status, notify }: PageProps) {
       </Card>
 
       <Card title={t("Multi-device sync")}>
-        <Toggle checked={form.tailscale} onChange={(v) => set({ tailscale: v })} label={t("Find and sync over Tailscale (recommended)")}>
+        <Toggle checked={form.tailscale && !form.easyTier} onChange={(v) => set({ tailscale: v, easyTier: v ? false : form.easyTier })} label={t("Find and sync over Tailscale (recommended)")}>
           {t("No setup: the computers of the tailnet that run Clash Traffic find each other, fetch each other's numbers every minute and show them together.")}{" "}
           {t("The data goes straight between your own devices, through no third party; devices shared into the tailnet by others cannot read it; the access log is not shared.")}
         </Toggle>
+        <Toggle checked={form.easyTier} onChange={(v) => set({ easyTier: v, tailscale: v ? false : form.tailscale })} label={t("Find and sync over EasyTier")}>
+          {t("Discovers routed devices every minute, including relayed peers. Enter the same sync key on your own devices; access logs are not shared.")}
+        </Toggle>
+        {form.easyTier && <>
+          <p class="hint">{t("RPC and network are detected from the running Windows service. Leave overrides empty for automatic discovery.")}</p>
+          <button type="button" class="ghost" disabled={busy === "easytier"} onClick={() => run("easytier", async () => setEasyDiscovery(await Preferences.detectEasyTier(form)))}>
+            {busy === "easytier" ? t("Scanning…") : t("Detect EasyTier")}
+          </button>
+          {easyDiscovery && <div class="stack">
+            <div class="hint">{easyDiscovery.version} · {easyDiscovery.cli}</div>
+            {easyDiscovery.error && <div class="banner warning" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{easyDiscovery.error}</div>}
+            {easyDiscovery.candidates.map((c) => <div class="row" key={`${c.rpc}/${c.instance}/${c.ip}`}>
+              <span>{c.name} · {c.ip} · RPC {c.rpc} · {c.source}</span>
+              <button type="button" class="ghost" onClick={() => set({easyTierRpc:c.rpc,easyTierInstance:c.instance})}>{t("Use this network")}</button>
+            </div>)}
+            {easyDiscovery.errors.length > 0 && <details><summary>{t("Discovery diagnostics")}</summary><pre style={{ whiteSpace:"pre-wrap", overflowWrap:"anywhere" }}>{easyDiscovery.errors.join("\n\n")}</pre></details>}
+          </div>}
+          <Field label={t("EasyTier sync key")} hint={t("At least 16 characters. Use a separate key, not your EasyTier network password.")}>
+            <input type="password" autoComplete="new-password" value={form.easyTierSecret} onInput={(e) => set({ easyTierSecret: e.currentTarget.value })} />
+          </Field>
+          <Field label={t("EasyTier CLI path")} hint={t("Leave empty to detect easytier-cli automatically.")}>
+            <input type="text" value={form.easyTierCli} onInput={(e) => set({ easyTierCli: e.currentTarget.value })} />
+          </Field>
+          <Field label={t("EasyTier local RPC")}>
+            <input type="text" placeholder={t("Automatic (GUI service / local core)")} value={form.easyTierRpc} onInput={(e) => set({ easyTierRpc: e.currentTarget.value })} />
+          </Field>
+          <Field label={t("EasyTier instance name")} hint={t("Leave empty to detect; a name or instance ID can override the selection.")}>
+            <input type="text" value={form.easyTierInstance} onInput={(e) => set({ easyTierInstance: e.currentTarget.value })} />
+          </Field>
+        </>}
         <p class="muted small sub-head">{t("Other ways to sync (optional): for devices that are not online at the same time, exchange the data through a shared folder or WebDAV too.")}</p>
         <Field label={t("Sync with")}>
           <div class="segmented">
